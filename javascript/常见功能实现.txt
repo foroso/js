@@ -1,0 +1,26 @@
+
+    $('#subtn').click(function () {
+        var checkedAll=true;
+        var qidSize=$("input[name='qids[]']").size();
+        for (var i = 1; i <= qidSize; i++) {
+            var radioName = "radio" + i;
+            var radio = $(':radio[name="' + radioName + '"]');
+            if (!radio.filter(':checked').length) {
+                checkedAll = false;
+                $("html,body").animate({scrollTop: radio.closest('.panel').offset().top - 80}, 1000);
+                BootstrapDialog.show({
+                    type: BootstrapDialog.TYPE_WARNING,
+                    title: '操作提示 ',
+                    message: '您有题目没有选择！'
+                })
+                radio.closest('.panel').attr('class', 'panel panel-danger');
+                break;
+            }
+        }
+        if(checkedAll){
+            $('#examForm').attr('action','/exam/submit');
+            $('#examForm').submit();
+        }
+
+
+    });
