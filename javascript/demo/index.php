@@ -29,10 +29,10 @@ class Test
         // Initialize
         self::$db = new \Medoo\Medoo([
             'database_type' => 'mysql',
-            'database_name' => 'openapi',
-            'server' => 'localhost',
-            'username' => 'root',
-            'password' => 'root'
+            'database_name' => 'openapi_localcache',
+            'server' => 'rm-bp178946u0rk4ptjf.mysql.rds.aliyuncs.com',
+            'username' => 'ops_new_phpfpm',
+            'password' => 'tEkaFBOyCTD9'
         ]);
 
 
@@ -75,12 +75,12 @@ class Test
 
             //检查是否验证通过
             if (!$info['success']) {
-                $info['success'] = $ip.' FPM检测失败~';
-                $info['data'] = '请求'.$url.' 通过utils.util.sessionid接口的返回值为：'. ($result ? $result : '空');
+                $info['success'] = $ip . ' FPM检测失败~';
+                $info['data'] = '请求' . $url . ' 通过utils.util.sessionid接口的返回值为：' . ($result ? $result : '空');
                 self::$error[] = $info;
             } else {
-                $info['success'] = $ip.' FPM运行正常';
-                $info['data'] = '请求'.$url.'通过utils.util.sessionid接口返回值为：'. $result;
+                $info['success'] = $ip . ' FPM运行正常';
+                $info['data'] = '请求' . $url . '通过utils.util.sessionid接口返回值为：' . $result;
                 self::$success[] = $info;
             }
         } catch (Exception $e) {
@@ -200,27 +200,34 @@ class Test
         try {
 
             //查询数据表是否存在着
-            $info = self::$db->query(
-                "SELECT COUNT(1) AS flag FROM information_schema.tables WHERE table_schema='openapi' AND table_name = 'temp_shared_spo';"
-            )->fetch();
+            /* $info = self::$db->query(
+                 "SELECT COUNT(1) AS flag FROM information_schema.tables WHERE table_schema='openapi' AND table_name = 'temp_shared_spo';"
+             )->fetch();*/
+            $tmp_data = self::$db->get("tmp_shared_spo", "communication_addr", [
+                "id" => 1
+            ]);
 
+            //没有数据就插入
+            if (!$tmp_data) {
+                self::$db->query(" INSERT INTO tmp_shared_spo SELECT * FROM openapi.shared_spo");
+            }else{
+                //更新数据到临时表中
+                self::$db->query(" UPDATE `tmp_shared_spo` SET `communication_addr` = (SELECT openapi.shared_spo.communication_addr FROM openapi.shared_spo WHERE id = 1) WHERE id=1");
+            }
 
-
-            //复制数据到临时表中
-            self::$db->query("INSERT INTO `temp_shared_spo` SELECT * FROM `shared_spo`;");
 
             //验证数据是否已经生成好
-            $data = self::$db->get("temp_shared_spo", "communication_addr", [
+            $data = self::$db->get("tmp_shared_spo", "communication_addr", [
                 "id" => 1
             ]);
 
             if (empty($data)) {
-                throw new Exception('获取临时表数据失败~');
+                throw new Exception('获取openapi_localcache数据库下的tmp_shared_spo临时表数据失败~');
             } else {
 //                self::$success[] = array('suceess' => '获取临时表数据成功');
             }
         } catch (Exception $e) {//捕获异常
-            self::$error[] = $e->getMessage();
+            self::$error[] = array('message' => $e->getMessage(),'error'=>'SQL语句：'.self::$db->last());
         }
     }
 
@@ -364,7 +371,7 @@ class Test
         try {
 
             //json格式更新操作
-            $info = self::$db->update('temp_shared_spo', [
+            $info = self::$db->update('tmp_shared_spo', [
                 "communication_addr[JSON]" => $new_arr
             ], [
                 "id" => 1
@@ -373,11 +380,11 @@ class Test
             $last_sql = str_replace("tmp_shared_spo", "shared_spo", self::$db->last());
 
             if ($info->rowCount()) {
-                self::$success[] = self::$error ? '': array('success' => ' 如没有任何错误信息,请连接到openapi数据库中的shared_spo表中，执行以下sql：', 'update' => $last_sql);
+                self::$success[] = self::$error ? '' : array('success' => ' 如没有任何错误信息,请连接到openapi数据库中的shared_spo表中，执行以下sql：', 'update' => $last_sql);
             } elseif ($info->rowCount() == 0) {
-                self::$error[] = self::$error ? '': array('error' => '没有新的数据可更新，请勿重复提交');
+                self::$error[] = self::$error ? '' : array('error' => '没有新的数据可更新，请勿重复提交');
 //                self::$error[] = array('error' => '没有新的数据可更新，请勿重复提交', 'error_info' => self::$db->last());
-            }else{
+            } else {
                 self::$error[] = array('error' => '更新失败，请根据以下临时表的sql检测数据库是否正常', 'error_info' => self::$db->last());
             }
         } catch (Exception $e) {//捕获异常
@@ -623,7 +630,7 @@ class Test
 
             $this->$method($new_arr);
 
-        }else {
+        } else {
 
             foreach ($IPS as $out_ip => $inner_ip) {
 
@@ -664,6 +671,7 @@ if ($_POST) {
     //用来存放返回值的
     $return_data = array();
 
+    //处理用户提交的ip
     $IPS = $Check_Obj->deal_ip_array($outips, $inips);
     if (!$IPS) {
         $return_data['error'] = $Check_Obj::$error ? $Check_Obj::$error : false;
@@ -677,29 +685,15 @@ if ($_POST) {
 
     $scheduler->newTask($Check_Obj->step($IPS, 'check_remote_port'));   //检查远程端口
     $scheduler->newTask($Check_Obj->step($IPS, 'check_fpm_by_api'));    //验证fpm是否正常
-    $scheduler->newTask($Check_Obj->step($IPS, 'create_temp_table'));   //临时表更新
-//    $scheduler->newTask($Check_Obj->step($IPS, 'update_ip'));   //生产更新的sql语句
-
     $scheduler->run();
 
+    $Check_Obj->create_temp_table(); //临时表更新
     $Check_Obj->update_new_ips($IPS);  //生产更新的sql语句
 
     //返回处理成功和失败的信息
     $return_data['success'] = $Check_Obj::$success ? $Check_Obj::$success : false;
     $return_data['error'] = $Check_Obj::$error ? $Check_Obj::$error : false;
     echo json_encode($return_data);
-
-    //返回处理成功和失败的信息
-//    $return_data['success'] = $Check_Obj::$success ? $Check_Obj::$success : false;
-//    $return_data['error'] = $Check_Obj::$error ? $Check_Obj::$error : false;
-//    echo json_encode($return_data);
-
-
-    /*if($_POST['type'] == 'delete'){
-        echo json_encode($Check_Obj->delete_old_data($_POST['id']));
-    }elseif($_POST['type'] == 'update'){
-        echo json_encode($Check_Obj->update_old_data($_POST['id'],$_POST['in_ip'],$_POST['out_ip']));
-    }*/
 
 
 }

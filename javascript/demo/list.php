@@ -4,9 +4,9 @@ require 'yield/medoo.php';
 $db = new \Medoo\Medoo([
     'database_type' => 'mysql',
     'database_name' => 'openapi_localcache',
-    'server' => 'localhost',
-    'username' => 'root',
-    'password' => 'root'
+    'server' => 'rm-bp178946u0rk4ptjf.mysql.rds.aliyuncs.com',
+    'username' => 'ops_new_phpfpm',
+    'password' => 'tEkaFBOyCTD9'
 ]);
 
 //取出fpm的映射关系
@@ -18,19 +18,19 @@ $data = $db->select('fpm_ip_info', [
 $fpm_ips = $db->query('select communication_addr from openapi.shared_spo WHERE id=1')->fetchColumn();
 
 //转为数组
-$fpm_ips = json_decode($fpm_ips,true);
+$fpm_ips = json_decode($fpm_ips, true);
 
 //将生产环境的ip和fpm映射表对应的外网ip合并
-$res_data = array_combine(array_column($data,'inner_ip','id'),array_column($data,'out_ip','id'));
+$res_data = array_combine(array_column($data, 'inner_ip', 'id'), array_column($data, 'out_ip', 'id'));
 
 //重新处理为方便前端操作的数组
 $data = array();
-foreach($fpm_ips as $key=>$val){
-    if($res_data[$val]){
+foreach ($fpm_ips as $key => $val) {
+    if ($res_data[$val]) {
         $data[] = array(
-                'id' => ($key + 1),
-                'inner_ip'=>$val,
-                'out_ip'=>$res_data[$val],
+            'id' => ($key + 1),
+            'inner_ip' => $val,
+            'out_ip' => $res_data[$val],
         );
     }
 }
@@ -90,13 +90,33 @@ foreach($fpm_ips as $key=>$val){
 
         }
 
-         /*json展示样式 start*/
-         pre {outline: 1px solid #ccc; padding: 5px; margin: 5px; }
-        .string { color: green; }
-        .number { color: darkorange; }
-        .boolean { color: blue; }
-        .null { color: magenta; }
-        .key { color: red; }
+        /*json展示样式 start*/
+        pre {
+            outline: 1px solid #ccc;
+            padding: 5px;
+            margin: 5px;
+        }
+
+        .string {
+            color: green;
+        }
+
+        .number {
+            color: darkorange;
+        }
+
+        .boolean {
+            color: blue;
+        }
+
+        .null {
+            color: magenta;
+        }
+
+        .key {
+            color: red;
+        }
+
         /*json展示样式 end*/
 
 
@@ -232,10 +252,10 @@ foreach($fpm_ips as $key=>$val){
 
         $("input[name='ip_out']").each(function () {
 
-                if (!checkIP($(this).val())) {
-                    alert($(this).val() + "外网IP地址不合法！");
-                    result = false;
-                }
+            if (!checkIP($(this).val())) {
+                alert($(this).val() + "外网IP地址不合法！");
+                result = false;
+            }
 
         })
 
@@ -409,7 +429,7 @@ foreach($fpm_ips as $key=>$val){
             json = JSON.stringify(json, undefined, 2);
         }
         json = json.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
-        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function(match) {
+        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
             var cls = 'number';
             if (/^"/.test(match)) {
                 if (/:$/.test(match)) {
