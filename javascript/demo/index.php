@@ -5,7 +5,7 @@ require 'yield/task.php';
 require 'yield/medoo.php';
 
 
-// 报告 runtime 错误
+// 关闭notice通知
 error_reporting(E_ERROR | E_WARNING | E_PARSE);
 //设置最大执行时间
 set_time_limit(0);
@@ -22,7 +22,7 @@ class Test
     public static $success = array();
 
     /**
-     *  js模拟请求
+     * js模拟请求
      */
     public function __construct()
     {
@@ -38,8 +38,15 @@ class Test
 
     }
 
+    /**
+     * 通过API网关请求FPM主机
+     * @param $url
+     * @param int $port
+     */
     public function check_fpm_by_api($url, $port = 8080)
     {
+
+        $ip = $url;
 
         $info = [
             'api' => 'utils.util.sessionid',
@@ -55,22 +62,29 @@ class Test
                         'method' => 'POST',
                         'header' => 'OA-App-Key: 1001520',
                         'content' => http_build_query($info),
-                        'timeout' => 15
+                        'timeout' => 5
                     )
                 )
             );
 
-            $result = file_get_contents($url, false, $context);
-            $info = json_decode($result);
+
+            $result = @file_get_contents($url, false, $context);
+
+            $info = json_decode($result, true);
+
 
             //检查是否验证通过
-            if (!$info->success) {
-                self::$error[] = $result;
+            if (!$info['success']) {
+                $info['success'] = $ip.' FPM检测失败~';
+                $info['data'] = '请求'.$url.' 通过utils.util.sessionid接口的返回值为：'. ($result ? $result : '空');
+                self::$error[] = $info;
             } else {
-                self::$success[] = $result;
+                $info['success'] = $ip.' FPM运行正常';
+                $info['data'] = '请求'.$url.'通过utils.util.sessionid接口返回值为：'. $result;
+                self::$success[] = $info;
             }
         } catch (Exception $e) {
-            self::$error[] = $e->getMessage();
+//            self::$error[] = $e->getMessage();
         }
 
     }
@@ -81,7 +95,7 @@ class Test
      * @param $url 请求的url地址
      * @param array $params 请求参数
      * @param bool $is_post 是否为post请求
-     * @param int $time_out 请求时长
+     * @param int $time_out 请求时长默认10秒
      * @param array $header header头设置
      *
      * @return mixed
@@ -180,7 +194,7 @@ class Test
      *
      * @return bool
      */
-    public function create_temp_table($ip='localhost', $port=8080)
+    public function create_temp_table($ip = 'localhost', $port = 8080)
     {
 
         try {
@@ -190,10 +204,7 @@ class Test
                 "SELECT COUNT(1) AS flag FROM information_schema.tables WHERE table_schema='openapi' AND table_name = 'temp_shared_spo';"
             )->fetch();
 
-            //表不存在则新建临时表
-            if (!$info['flag']) {
-                self::$db->query("CREATE TABLE `temp_shared_spo` LIKE `shared_spo`;");
-            }
+
 
             //复制数据到临时表中
             self::$db->query("INSERT INTO `temp_shared_spo` SELECT * FROM `shared_spo`;");
@@ -206,7 +217,7 @@ class Test
             if (empty($data)) {
                 throw new Exception('获取临时表数据失败~');
             } else {
-                self::$success[] = array('suceess' => '建表成功', 'code' => 200);
+//                self::$success[] = array('suceess' => '获取临时表数据成功');
             }
         } catch (Exception $e) {//捕获异常
             self::$error[] = $e->getMessage();
@@ -214,7 +225,7 @@ class Test
     }
 
     /**
-     * 获取ip
+     * 获取原表中的ip
      * @return array
      */
     public function get_ips()
@@ -237,6 +248,71 @@ class Test
 
     }
 
+
+    /**
+     * 获取现在运行中的fpm机内外网ip
+     * @return array|bool
+     */
+    public function get_old_datas()
+    {
+        try {
+            $data = self::$db->select('local_fpm_info', [
+                'out_ip', 'inner_ip'
+            ]);
+
+
+            return $data;
+        } catch (Exception $e) {//捕获异常
+            self::$error[] = $e->getMessage();
+        }
+
+    }
+
+
+    /**
+     * 更新现在运行中的fpm主机ip信息
+     * @param $id
+     * @param $data
+     * @return bool|PDOStatement
+     */
+    public function update_old_data($id, $in_ip, $out_ip)
+    {
+        try {
+            $data = self::$db->update('local_fpm_info', [
+                'out_ip' => $out_ip,
+                'inner_ip' => $in_ip
+            ], [
+                'id' => $id
+            ]);
+
+
+            return $data;
+        } catch (Exception $e) {//捕获异常
+            self::$error[] = $e->getMessage();
+        }
+    }
+
+
+    /**
+     * 删除某个fpm主机
+     * @param $id
+     * @return bool|PDOStatement
+     */
+    public function delete_old_data($id)
+    {
+        try {
+            $data = self::$db->update('local_fpm_info', [
+                'status' => 0
+            ], [
+                'id' => $id
+            ]);
+
+
+            return $data;
+        } catch (Exception $e) {//捕获异常
+            self::$error[] = $e->getMessage();
+        }
+    }
 
     /**
      * 新增FPM主机IP操作
@@ -268,6 +344,41 @@ class Test
                 self::$success[] = array('success' => $ip . ' 如没有任何错误信息,请执行以下sql：', 'code' => 200, 'update' => $last_sql);
             } else {
                 self::$error[] = array('error' => $ip . ' 临时表更新失败，影响行数0', 'error_info' => self::$db->last());
+            }
+        } catch (Exception $e) {//捕获异常
+            self::$error[] = $e->getMessage();
+        }
+    }
+
+
+    /**
+     * 把新的ip更新到映射表中，并生成执行sql
+     * @param $ip
+     * @param int $port
+     */
+    public function update_new_ips($ips)
+    {
+
+        $new_arr = array_values($ips);
+
+        try {
+
+            //json格式更新操作
+            $info = self::$db->update('temp_shared_spo', [
+                "communication_addr[JSON]" => $new_arr
+            ], [
+                "id" => 1
+            ]);
+
+            $last_sql = str_replace("tmp_shared_spo", "shared_spo", self::$db->last());
+
+            if ($info->rowCount()) {
+                self::$success[] = self::$error ? '': array('success' => ' 如没有任何错误信息,请连接到openapi数据库中的shared_spo表中，执行以下sql：', 'update' => $last_sql);
+            } elseif ($info->rowCount() == 0) {
+                self::$error[] = self::$error ? '': array('error' => '没有新的数据可更新，请勿重复提交');
+//                self::$error[] = array('error' => '没有新的数据可更新，请勿重复提交', 'error_info' => self::$db->last());
+            }else{
+                self::$error[] = array('error' => '更新失败，请根据以下临时表的sql检测数据库是否正常', 'error_info' => self::$db->last());
             }
         } catch (Exception $e) {//捕获异常
             self::$error[] = $e->getMessage();
@@ -389,16 +500,16 @@ class Test
 //        socket_set_option($sock, SOL_SOCKET, SO_REUSEADDR, 1);   //每次请求后注意关闭连接
             socket_set_nonblock($sock);
 
-            try{
+            try {
                 socket_connect($sock, $ip, $port);
-            }catch(Exception $e){
+            } catch (Exception $e) {
                 throw new Exception(socket_connect($sock, $ip, $port));
             }
             socket_set_block($sock);
             self::$status = socket_select($r = array($sock), $w = array($sock), $f = array($sock), 5);
             $info = self::check_status($ip, $port);
 
-        }catch (Exception $e) {//捕获异常
+        } catch (Exception $e) {//捕获异常
             self::$error[] = $e->getMessage();
         }
 
@@ -411,16 +522,17 @@ class Test
      */
     public static function check_status($ip, $port)
     {
-        $host = $ip . ': ' . $port;
+        $host = $ip . ':' . $port;
         switch (self::$status) {
             case 2:
                 self::$error[] = array('error' => $host . ' 端口未开启');
                 return false;
             case 1:
-                self::$success[] = array('success' => $host . ' 端口正常');
+//                echo json_encode(array('success' => $host . ' 远程主机端口已启用可正常请求'));
+                self::$success[] = array('success' => $host . ' 远程主机端口已启用可正常请求');
                 return true;
             case 0:
-                self::$error[] = array('error' => $host . ' 连接超时');
+                self::$error[] = array('error' => $host . ' 请求连接超时');
                 return false;
         }
     }
@@ -442,32 +554,36 @@ class Test
                 $new_ips = array_combine($outips, $inips);
 
                 //获取原有表中的ip，验证并除去重复的ip
-                $datas = $this->get_ips();
+                $new_ips = array_unique($new_ips);
 
+                //添加一个项，验证新增外网ip和原有的外网ip是否一致
                 foreach ($new_ips as $out => $inner) {
 
-                    if($out == $inner){
-                        self::$error[] = array('error' =>'外网ip： ' .$out . '与内网ip'.$inner . '相同');
+                    if ($out == $inner) {
+                        self::$error[] = array('error' => '外网ip： ' . $out . '与内网ip' . $inner . '相同');
                         return false;
                     }
 
                     //验证外网ip
                     list($out_ip, $port) = explode(':', $out);
                     if (!filter_var($out_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                        self::$error[] = array('error' => $out_ip . ' 格式不正确,请输入正确的外网IP地址~', 'code' => 2001);
+//                        self::$error[] = array('error' => $out_ip . ' 格式不正确,请输入正确的外网IP地址~');
+                        echo json_encode(array('error' => $out_ip . ' 格式不正确,请输入正确的外网IP地址~'));
                     }
 
                     //验证内外ip
                     list($in_ip, $port) = explode(':', $inner);
                     if (!filter_var($in_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                        self::$error[] = array('error' => $in_ip . ' 格式不正确,请输入正确的内网IP地址~', 'code' => 2001);
+//                        self::$error[] = array('error' => $in_ip . ' 格式不正确,请输入正确的内网IP地址~');
+                        echo json_encode(array('error' => $in_ip . ' 格式不正确,请输入正确的内网IP地址~'));
                     }
 
-                    //去重
-                    if (in_array($inner, $datas)) {
+                    //去重 ,暂时不用，后期可能用到
+                    /*if (in_array($inner, $datas)) {
                         unset($new_ips[$out]);
-                        self::$error[] = array('error' => $inner . ' 已经存在,请检查输入IP是否正确~', 'code' => 2007);
-                    }
+                        self::$error[] = array('error' => $inner . ' 已经存在,请检查输入IP是否正确~');
+                    }*/
+
                     continue;
                 }
 
@@ -487,24 +603,36 @@ class Test
     /**
      * Notes:协程迭代依次处理
      * create_User: tenger
-     * @param $datas    客户端提交的ip数组
+     * @param $IPS   客户端提交的ip数组
      * @param $method   需要用到的方法名
      *
      * @return Generator
      */
-    public function step($datas, $method)
+    public function step($IPS, $method)
     {
         $method = trim($method);
+        $new_arr = array();
 
-        foreach ($datas as $out_ip => $inner_ip) {
+        if ($method == 'update_new_ips') {
+            foreach ($IPS as $out_ip => $inner_ip) {
 
-            if ($method == 'update_ip') {
-                list($ip, $port) = explode(':', $inner_ip);
-            }else{
-                list($ip, $port) = explode(':', $out_ip);
+                array_push($new_arr, $inner_ip);
+//                list($ip, $port) = explode(':', $inner_ip);
+
             }
-            $this->$method($ip, $port);
-            yield;
+
+            $this->$method($new_arr);
+
+        }else {
+
+            foreach ($IPS as $out_ip => $inner_ip) {
+
+                list($ip, $port) = explode(':', $out_ip);
+
+                $this->$method($ip, $port);
+
+                yield;
+            }
         }
     }
 
@@ -521,9 +649,14 @@ class Test
 }
 
 
+//===============接收POST请求=====================
+//===============接收POST请求=====================
+
+
 if ($_POST) {
     $Check_Obj = new Test();
     $info = $_POST;
+
     $step = $info['step'];
     $outips = $_POST['outip'];
     $inips = $_POST['inip'];
@@ -532,8 +665,7 @@ if ($_POST) {
     $return_data = array();
 
     $IPS = $Check_Obj->deal_ip_array($outips, $inips);
-
-    if(!$IPS){
+    if (!$IPS) {
         $return_data['error'] = $Check_Obj::$error ? $Check_Obj::$error : false;
         echo json_encode($return_data);
         exit;
@@ -543,20 +675,31 @@ if ($_POST) {
     //协程迭代依次处理
     $scheduler = new Scheduler;
 
-    $scheduler->newTask($Check_Obj->step($IPS, 'check_remote_port'));
-    $scheduler->newTask($Check_Obj->step($IPS, 'check_remote_url'));
-    $scheduler->newTask($Check_Obj->step($IPS, 'create_temp_table'));
-    $scheduler->newTask($Check_Obj->step($IPS, 'update_ip'));
+    $scheduler->newTask($Check_Obj->step($IPS, 'check_remote_port'));   //检查远程端口
+    $scheduler->newTask($Check_Obj->step($IPS, 'check_fpm_by_api'));    //验证fpm是否正常
+    $scheduler->newTask($Check_Obj->step($IPS, 'create_temp_table'));   //临时表更新
+//    $scheduler->newTask($Check_Obj->step($IPS, 'update_ip'));   //生产更新的sql语句
 
     $scheduler->run();
 
+    $Check_Obj->update_new_ips($IPS);  //生产更新的sql语句
 
     //返回处理成功和失败的信息
     $return_data['success'] = $Check_Obj::$success ? $Check_Obj::$success : false;
     $return_data['error'] = $Check_Obj::$error ? $Check_Obj::$error : false;
     echo json_encode($return_data);
 
+    //返回处理成功和失败的信息
+//    $return_data['success'] = $Check_Obj::$success ? $Check_Obj::$success : false;
+//    $return_data['error'] = $Check_Obj::$error ? $Check_Obj::$error : false;
+//    echo json_encode($return_data);
 
+
+    /*if($_POST['type'] == 'delete'){
+        echo json_encode($Check_Obj->delete_old_data($_POST['id']));
+    }elseif($_POST['type'] == 'update'){
+        echo json_encode($Check_Obj->update_old_data($_POST['id'],$_POST['in_ip'],$_POST['out_ip']));
+    }*/
 
 
 }
